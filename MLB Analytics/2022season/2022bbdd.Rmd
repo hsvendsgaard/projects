@@ -1,0 +1,159 @@
+---
+title: "2022 MLB Player Analysis"
+output:
+  html_document:
+    df_print: paged
+---
+
+First, I need to read in the data which was downloaded as a .csv file from Baseball Savant. This specific data set is limited to players with 100 or more plate appearances in the 2022 MLB season.
+
+```{r, echo=FALSE, warning=FALSE}
+library(ggplot2)
+library(knitr)
+```
+
+```{r}
+stats <- read.csv("stats2022_100pamin.csv")
+```
+
+Clean the data by changing column name to make it easier to navigate moving forward
+
+```{r}
+names(stats)[names(stats) == "ï..last_name"] <- "last_name"
+
+```
+
+Create a model to predict the total number of hits for a player in the season.
+
+```{r}
+library(mgcv)
+mod <- lm(b_total_hits ~ b_ab + launch_angle_avg + sweet_spot_percent, data=stats)
+summary(mod)
+```
+
+This model was found by playing around with the given variables and finding the select variables that fit the data the best. From the variables selected (at-bats, launch angle average, and sweet spot percentage), we get a model that is relatively accurate. 
+
+
+Now, we will use the model to predict the number of hits for each player in the 2022 season.
+
+```{r}
+preds <- predict(mod, stats)
+stats$xHits <- preds
+
+```
+
+Find the difference between the predicted value and the actual value.
+
+```{r}
+stats$hit_diff <- stats$xHits - stats$b_total_hits
+
+```
+
+I will utilize ggplot here to highlight the predicted number of hits versus the actual number of hits. This graph will show the accuracy of the model from above.
+
+```{r, warning=FALSE}
+library(dplyr)
+stats %>%
+  ggplot(aes(xHits, b_total_hits)) +
+  geom_point() +
+  geom_smooth() +
+  ggtitle('Predicted Hits vs. Actual')
+
+```
+
+We do not need all the columns that are currently in this data set, so I will take out the vast majority of them and create a new data frame which is much easier on the eye.
+
+```{r}
+stats_limit <- stats %>%
+  select(last_name, first_name, player_age, b_ab, b_total_pa, b_total_hits, batting_avg, xHits, hit_diff)
+
+```
+
+Since the number of at-bats varies for every player, I will divide the difference from expected hits and actual hits by the total number of at-bats this past season. From there, I will normalize the values on a 0 to 1 scale. The values after applying the division are quite small, and this will allow the analysis to go much smoother. The equation will look like the following:
+$y = norm(\frac{xH - H}{AB})$
+
+```{r}
+stats_limit$hitDiffperAB <- stats_limit$hit_diff / stats_limit$b_ab
+
+
+min <- min(stats_limit$hitDiffperAB)
+max <- max(stats_limit$hitDiffperAB)
+
+stats_limit$normDiffperAB <- (stats_limit$hitDiffperAB - min)/(max - min)
+```
+
+
+```{r, echo=FALSE}
+names(stats_limit)[names(stats_limit) == "last_name"] <- "Last"
+names(stats_limit)[names(stats_limit) == "first_name"] <- "First"
+names(stats_limit)[names(stats_limit) == "player_age"] <- "Age"
+names(stats_limit)[names(stats_limit) == "b_ab"] <- "AB"
+names(stats_limit)[names(stats_limit) == "b_total_pa"] <- "PA"
+names(stats_limit)[names(stats_limit) == "b_total_hits"] <- "H"
+names(stats_limit)[names(stats_limit) == "batting_avg"] <- "BA"
+names(stats_limit)[names(stats_limit) == "hit_diff"] <- "xHits - H"
+names(stats_limit)[names(stats_limit) == "hitDiffperAB"] <- "(xHits - H)/AB"
+names(stats_limit)[names(stats_limit) == "normDiffperAB"] <- "Normalized"
+
+stats_limit$xBA <- stats_limit$xHits / stats_limit$AB
+stats_limit$BAdiff <- stats_limit$xBA - stats_limit$BA
+
+```
+
+
+```{r}
+top10all <- stats_limit %>%
+  arrange(desc(Normalized)) %>%
+  slice(1:10)
+ 
+
+bottom10all <- stats_limit %>%
+  arrange(Normalized) %>%
+  slice(1:10)
+
+```
+
+```{r}
+kable(top10all, caption = "Top 10 Players in (Expected Hits - Hits) per AB")
+```
+
+```{r}
+kable(bottom10all, caption = "Bottom 10 Players in (Expected Hits - Hits) per AB")
+```
+
+
+From here, we will look at players under the age of 25 from the previous season. 
+
+```{r}
+young_players <- stats_limit %>%
+  filter(Age <= 25)
+
+```
+
+
+Create a data frame of the top 10 and bottom 10 players in respect to the normalized value stated above.
+
+```{r}
+top10 <- young_players %>%
+  arrange(desc(Normalized)) %>%
+  slice(1:10)
+ 
+
+bottom10 <- young_players %>%
+  arrange(Normalized) %>%
+  slice(1:10)
+
+```
+
+Below are the top 10 players in normalized expected hits per at-bat. These are the players that missed out on some hits, based on the way they connect with the ball.
+
+```{r, warning=FALSE}
+kable(top10, caption = "Top 10 Players Under 25 in (Expected Hits - Hits) per AB")
+
+```
+
+Below are the bottom 10 players. These results could be due to a handful of reasons. The most reasonable of those is luck-based. For example, these players may have had a handful more bloop singles than the players on the list above. In general, they are not squaring up the ball as much as their batting average numbers from this previous season may appear.
+
+```{r}
+kable(bottom10, caption = "Bottom 10 Players Under 25 in (Expected Hits - Hits) per AB")
+```
