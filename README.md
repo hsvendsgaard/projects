@@ -12,7 +12,7 @@ The repository contains projects that apply various analytical techniques to rea
 
 **Current Projects**
 
-MLB Player Batting Average Analysis:
+***MLB Player Batting Average Analysis:***
 
 In this project, I analyze Major League Baseball (MLB) players' expected batting average vs. their true batting average. I use historical data to calculate each player's expected performance and then compare it with their actual performance. Additionally, I generate predictions for the players' batting average in the upcoming season based on the analysis.
 
