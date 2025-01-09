@@ -1,0 +1,133 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r, echo=FALSE, warning=FALSE}
+library(ggplot2)
+library(knitr)
+library(dplyr)
+```
+
+
+```{r}
+newstats <- read.csv("mlb_3season_clean.csv")
+allstats <- read.csv("allplayers_3season.csv")
+```
+
+```{r}
+newstats <- newstats[newstats$year == "2024",]
+
+```
+
+
+```{r}
+colnames(newstats)[4] <- "age"
+colnames(allstats)[4] <- "age"
+```
+
+
+```{r}
+agestats <- allstats %>%
+  group_by(age) %>%
+  summarise(total_ab=sum(ab),
+             total_hits=sum(hit))
+
+
+agestats$ageBA <- agestats$total_hits / agestats$total_ab
+agestats$norm_hits <- log(agestats$total_hits)
+agestats$norm_ba <- log(agestats$ageBA)
+agestats$norm_hits_x_ba <- agestats$norm_hits * agestats$ageBA
+```
+
+```{r}
+joinedstats <- left_join(newstats, agestats, by = "age")
+#joinedstats$k_pct <- (joinedstats$strikeout / joinedstats$pa) * 100
+
+joinedstats = subset(joinedstats, select = -c(total_ab,total_hits, norm_hits, norm_ba) )
+
+joinedstats$sb_pa <- joinedstats$r_total_stolen_base / joinedstats$pa
+```
+
+
+```{r}
+normage <- agestats %>%
+  arrange(desc(age))
+
+normage = subset(normage, select = -c(norm_ba) )
+
+
+kable(normage, caption = "Every Age Combined Statistics 2022-2023")
+```
+
+
+```{r}
+library(mgcv)
+mod <- lm(hit ~ ab + launch_angle_avg + sweet_spot_percent + k_percent + sprint_speed + avg_hyper_speed, data=joinedstats)
+
+summary(mod)
+```
+
+
+```{r}
+predictions <- predict(mod, joinedstats)
+joinedstats$xHits <- predictions
+
+# Find the difference between expected hits and true hits
+joinedstats$hit_diff <- joinedstats$xHits - joinedstats$hit
+
+```
+
+
+```{r, warning=FALSE}
+library(dplyr)
+joinedstats %>%
+  ggplot(aes(xHits, hit)) +
+  geom_point() +
+  geom_smooth() +
+  ggtitle('Predicted Hits vs. Actual')
+
+```
+
+
+```{r}
+reducedjoin <- joinedstats[, c("last_name", "first_name", "age", "ab", "pa", "hit", "batting_avg", "xHits", "hit_diff", "r_total_stolen_base", "norm_hits_x_ba", "ageBA")]
+
+```
+
+
+Since the number of at-bats varies for every player, I will divide the difference from expected hits and actual hits by the total number of at-bats this past season. From there, I will normalize the values on a 0 to 1 scale. The values after applying the division are quite small, and this will allow the analysis to go much smoother. The equation will look like the following:
+$y = norm(\frac{xH - H}{AB})$
+
+```{r}
+reducedjoin$hitDiffperAB <- reducedjoin$hit_diff / reducedjoin$ab
+
+
+min <- min(reducedjoin$hitDiffperAB)
+max <- max(reducedjoin$hitDiffperAB)
+
+reducedjoin$normDiffperAB <- (reducedjoin$hitDiffperAB - min)/(max - min)
+```
+
+
+```{r, echo=FALSE}
+names(reducedjoin)[names(reducedjoin) == "last_name"] <- "Last"
+names(reducedjoin)[names(reducedjoin) == "first_name"] <- "First"
+names(reducedjoin)[names(reducedjoin) == "age"] <- "Age"
+names(reducedjoin)[names(reducedjoin) == "ab"] <- "AB"
+names(reducedjoin)[names(reducedjoin) == "r_total_stolen_base"] <- "SB"
+names(reducedjoin)[names(reducedjoin) == "pa"] <- "PA"
+names(reducedjoin)[names(reducedjoin) == "hit"] <- "H"
+names(reducedjoin)[names(reducedjoin) == "batting_avg"] <- "BA"
+names(reducedjoin)[names(reducedjoin) == "hit_diff"] <- "xHits - H"
+names(reducedjoin)[names(reducedjoin) == "hitDiffperAB"] <- "(xHits - H)/AB"
+names(reducedjoin)[names(reducedjoin) == "normDiffperAB"] <- "Normalized"
+names(reducedjoin)[names(reducedjoin) == "norm_hits_x_ba"] <- "Normalized Hits x BA"
+
+reducedjoin$xBA <- reducedjoin$xHits / reducedjoin$AB
+reducedjoin$BAdiff <- reducedjoin$xBA - reducedjoin$BA
+
+```
+
+
+

@@ -1,0 +1,275 @@
+---
+title: "2024 MLB Player Analysis with Projections for 2025"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r, echo=FALSE, warning=FALSE}
+library(ggplot2)
+library(knitr)
+library(dplyr)
+```
+
+```{r}
+stats <- read.csv("mlb_stats_2023clean.csv")
+sb <- read.csv("sbdata.csv")
+
+stats = merge(stats, sb, by.x=c("first_name", "last_name"), by.y=c("first_name", "last_name"))
+```
+
+```{r}
+all <- read.csv("2022_2023all.csv")
+```
+
+
+```{r}
+colnames(stats)[4] <- "age"
+colnames(all)[4] <- "age"
+```
+
+
+```{r}
+by_age <- all %>%
+  group_by(age) %>%
+  summarise(total_ab=sum(ab),
+             total_hits=sum(hit))
+
+
+by_age$ageBA <- by_age$total_hits / by_age$total_ab
+by_age$norm_hits <- log(by_age$total_hits)
+by_age$norm_ba <- log(by_age$ageBA)
+by_age$norm_hits_x_ba <- by_age$norm_hits * by_age$ageBA
+
+
+final_stats <- left_join(stats, by_age, by = "age")
+final_stats$k_pct <- (final_stats$strikeout / final_stats$pa) * 100
+
+final_stats = subset(final_stats, select = -c(total_ab,total_hits, norm_hits, norm_ba) )
+
+final_stats$sb_pa <- final_stats$sb / final_stats$pa
+```
+
+
+```{r}
+age_val <- by_age %>%
+  arrange(desc(age))
+
+age_val = subset(age_val, select = -c(norm_ba) )
+
+
+kable(age_val, caption = "Every Age Combined Statistics 2022-2023")
+```
+
+Create a model to predict the total number of hits for a player in the season.
+
+```{r}
+library(mgcv)
+mod <- lm(hit ~ ab + launch_angle_avg + sweet_spot_percent + exit_velocity_avg + k_pct +sb_pa, data=final_stats)
+
+#mod <- lm(hit ~ ab + launch_angle_avg + sweet_spot_percent, data=final_stats)
+#mod <- lm(hit ~ ., data = final_stats)
+
+summary(mod)
+```
+
+This model was found by playing around with the given variables and finding the select variables that fit the data the best. From the variables selected (at-bats, launch angle average, and sweet spot percentage), we get a model that is relatively accurate. 
+
+
+Now, we will use the model to predict the number of hits for each player in the 2022 season.
+
+```{r}
+preds <- predict(mod, final_stats)
+final_stats$xHits <- preds
+
+```
+
+Find the difference between the predicted value and the actual value.
+
+```{r}
+final_stats$hit_diff <- final_stats$xHits - final_stats$hit
+
+```
+
+I will utilize ggplot here to highlight the predicted number of hits versus the actual number of hits. This graph will show the accuracy of the model from above.
+
+```{r, warning=FALSE}
+library(dplyr)
+final_stats %>%
+  ggplot(aes(xHits, hit)) +
+  geom_point() +
+  geom_smooth() +
+  ggtitle('Predicted Hits vs. Actual')
+
+```
+
+We do not need all the columns that are currently in this data set, so I will take out the vast majority of them and create a new data frame which is much easier on the eye.
+
+```{r}
+stats_limit <- final_stats[, c("last_name", "first_name", "age", "ab", "pa", "hit", "batting_avg", "xHits", "hit_diff", "sb", "norm_hits_x_ba", "ageBA")]
+
+#stats_limit <- final_stats %>%
+  #select(last_name, first_name, age, ab, pa, hit, batting_avg,
+         #xHits, hit_diff)
+
+```
+
+Since the number of at-bats varies for every player, I will divide the difference from expected hits and actual hits by the total number of at-bats this past season. From there, I will normalize the values on a 0 to 1 scale. The values after applying the division are quite small, and this will allow the analysis to go much smoother. The equation will look like the following:
+$y = norm(\frac{xH - H}{AB})$
+
+```{r}
+stats_limit$hitDiffperAB <- stats_limit$hit_diff / stats_limit$ab
+
+
+min <- min(stats_limit$hitDiffperAB)
+max <- max(stats_limit$hitDiffperAB)
+
+stats_limit$normDiffperAB <- (stats_limit$hitDiffperAB - min)/(max - min)
+```
+
+
+```{r, echo=FALSE}
+names(stats_limit)[names(stats_limit) == "last_name"] <- "Last"
+names(stats_limit)[names(stats_limit) == "first_name"] <- "First"
+names(stats_limit)[names(stats_limit) == "age"] <- "Age"
+names(stats_limit)[names(stats_limit) == "ab"] <- "AB"
+names(stats_limit)[names(stats_limit) == "sb"] <- "SB"
+names(stats_limit)[names(stats_limit) == "pa"] <- "PA"
+names(stats_limit)[names(stats_limit) == "hit"] <- "H"
+names(stats_limit)[names(stats_limit) == "batting_avg"] <- "BA"
+names(stats_limit)[names(stats_limit) == "hit_diff"] <- "xHits - H"
+names(stats_limit)[names(stats_limit) == "hitDiffperAB"] <- "(xHits - H)/AB"
+names(stats_limit)[names(stats_limit) == "normDiffperAB"] <- "Normalized"
+names(stats_limit)[names(stats_limit) == "norm_hits_x_ba"] <- "Normalized Hits x BA"
+
+stats_limit$xBA <- stats_limit$xHits / stats_limit$AB
+stats_limit$BAdiff <- stats_limit$xBA - stats_limit$BA
+
+```
+
+
+```{r}
+top10all <- stats_limit %>%
+  arrange(desc(Normalized)) %>%
+  slice(1:10)
+
+top10all = subset(top10all, select = -c(SB, Normalized) )
+ 
+
+bottom10all <- stats_limit %>%
+  arrange(Normalized) %>%
+  slice(1:10)
+
+bottom10all = subset(bottom10all, select = -c(SB, Normalized) )
+
+```
+
+```{r}
+kable(top10all, caption = "Top 10 Players in (Expected Hits - Hits) per AB")
+```
+
+```{r}
+kable(bottom10all, caption = "Bottom 10 Players in (Expected Hits - Hits) per AB")
+```
+
+
+From here, we will look at players under the age of 25 from the previous season. 
+
+```{r}
+young_players <- stats_limit %>%
+  filter(Age <= 25)
+
+```
+
+
+Create a data frame of the top 10 and bottom 10 players in respect to the normalized value stated above.
+
+```{r}
+top10 <- young_players %>%
+  arrange(desc(Normalized)) %>%
+  slice(1:10)
+
+top10 = subset(top10, select = -c(SB, Normalized) )
+ 
+
+bottom10 <- young_players %>%
+  arrange(Normalized) %>%
+  slice(1:10)
+
+bottom10 = subset(bottom10, select = -c(SB, Normalized) )
+
+```
+
+Below are the top 10 players in normalized expected hits per at-bat. These are the players that missed out on some hits, based on the way they connect with the ball.
+
+```{r, warning=FALSE}
+kable(top10, caption = "Top 10 Players Under 25 in (Expected Hits - Hits) per AB")
+
+```
+
+Below are the bottom 10 players. These results could be due to a handful of reasons. The most reasonable of those is luck-based. For example, these players may have had a handful more bloop singles than the players on the list above. In general, they are not squaring up the ball as much as their batting average numbers from this previous season may appear.
+
+```{r}
+kable(bottom10, caption = "Bottom 10 Players Under 25 in (Expected Hits - Hits) per AB")
+```
+
+
+```{r}
+stats_limit$next_year_age <- stats_limit$Age + 1
+
+stats_limit$next_year_weight <- 0
+  
+#a <- by_age$norm_hits_x_ba[by_age$age == final_stats$next_year_age[1]]
+
+for (i in 1:nrow(stats_limit)){
+  stats_limit$next_year_weight[i] = by_age$norm_hits_x_ba[by_age$age == stats_limit$next_year_age[i]]
+}
+
+stats_limit$next_year_age_avg <- 0
+
+for (i in 1:nrow(stats_limit)){
+  stats_limit$next_year_age_avg[i] = by_age$ageBA[by_age$age == stats_limit$next_year_age[i]]
+}
+```
+
+
+```{r}
+stats_limit$k_var <- (stats_limit$xBA + stats_limit$BA) / (2 * stats_limit$ageBA)
+stats_limit$aw_var <- stats_limit$next_year_weight / stats_limit$`Normalized Hits x BA`
+stats_limit$next_szn_xba <- stats_limit$k_var * stats_limit$aw_var * stats_limit$next_year_age_avg 
+
+```
+
+
+```{r}
+stats_clean <- stats_limit[, c("Last", "First", "Age", "BA", "xBA", "next_year_age", "next_szn_xba")]
+
+
+names(stats_clean)[names(stats_clean) == "Age"] <- "2023 Age"
+names(stats_clean)[names(stats_clean) == "BA"] <- "2023 BA"
+names(stats_clean)[names(stats_clean) == "xBA"] <- "2023 xBA"
+names(stats_clean)[names(stats_clean) == "next_year_age"] <- "2024 Age"
+names(stats_clean)[names(stats_clean) == "next_szn_xba"] <- "2024 xBA"
+```
+
+
+```{r}
+new10 <- stats_clean %>%
+  arrange(desc(`2024 xBA`)) %>%
+  slice(1:10)
+
+
+kable(new10, caption = "Top 10 Players in xBA for the 2024 Season")
+```
+
+
+```{r}
+young_no2 <- stats_clean %>%
+  filter(`2023 Age` <= 25)
+
+new10young <- young_no2 %>%
+  arrange(desc(`2024 xBA`)) %>%
+  slice(1:10)
+
+kable(new10young, caption = "Top 10 Players (Under 25) in xBA for the 2024 Season")
+```
